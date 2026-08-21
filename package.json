@@ -4,25 +4,36 @@
   "dependencies": {
     "@cap-js/hana": "^2",
     "@sap/cds": "^9",
-    "@sap/xssec": "^4"
+    "@sap/xssec": "^4",
+    "amqplib": "^2.0.1",
+    "dotenv": "^17.4.2"
   },
   "devDependencies": {
-    "@cap-js/sqlite": "^2.4",
+    "@cap-js/sqlite": "^2.4.0",
     "@sap/cds-dk": "^9"
   },
   "scripts": {
     "start": "cds-serve"
   },
   "private": true,
-  "cds": {
-    "requires": {
-      "[production]": {
-        "auth": "xsuaa"
-      },
-      "messaging": {
-        "kind": "enterprise-messaging"
-      },
-      "destinations": true
-    }
+"cds": {
+  "requires": {
+    "[development]": {
+      "db": {
+        "kind": "sqlite",
+        "credentials": {
+          "url": "db.sqlite"
+        }
+      }
+    },
+    "[production]": {
+      "auth": "xsuaa",
+      "db": "hana"
+    },
+    "messaging": {
+      "kind": "enterprise-messaging"
+    },
+    "destinations": true
   }
+}
 }

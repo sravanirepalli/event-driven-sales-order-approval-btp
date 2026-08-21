@@ -1,3 +1,4 @@
+const { publishApprovalEvent } = require('../messaging/rabbitmq');
 const cds = require('@sap/cds');
 
 module.exports = cds.service.impl(function () {
@@ -34,7 +35,17 @@ module.exports = cds.service.impl(function () {
             approvalPath = 'SALES_MANAGER';
             reason = 'HIGH_VALUE';
         }
-
+if (approvalRequired) {
+    await publishApprovalEvent({
+        orderId: order.ID,
+        customer: order.customer,
+        orderValue: order.orderValue,
+        customerRisk: order.customerRisk,
+        approvalPath,
+        reason
+    });
+    
+}
         return {
             approvalRequired,
             approvalPath,
