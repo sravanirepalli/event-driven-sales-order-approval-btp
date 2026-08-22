@@ -1,15 +1,18 @@
 _schema-version: 3.3.0
 ID: sales-order-approval
 version: 1.0.0
-description: "A simple CAP project."
+description: "Sales Order Approval Extension on SAP BTP"
+
 parameters:
   enable-parallel-deployments: true
+
 build-parameters:
   before-all:
     - builder: custom
       commands:
         - npm ci
         - npx cds build --production
+
 modules:
   - name: sales-order-approval-srv
     type: nodejs
@@ -20,13 +23,12 @@ modules:
     build-parameters:
       builder: npm-ci
     provides:
-      - name: srv-api # required by consumers of CAP services (e.g. approuter)
+      - name: srv-api
         properties:
           srv-url: ${default-url}
     requires:
       - name: sales-order-approval-auth
       - name: sales-order-approval-db
-      - name: sales-order-approval-messaging
       - name: sales-order-approval-destination
 
   - name: sales-order-approval-db-deployer
@@ -51,19 +53,13 @@ resources:
           credential-types:
             - "binding-secret"
             - "x509"
-    processed-after:
-      - sales-order-approval-messaging
+
   - name: sales-order-approval-db
     type: com.sap.xs.hdi-container
     parameters:
       service: hana
       service-plan: hdi-shared
-  - name: sales-order-approval-messaging
-    type: org.cloudfoundry.managed-service
-    parameters:
-      service: enterprise-messaging
-      service-plan: default
-      path: ./event-mesh.json
+
   - name: sales-order-approval-destination
     type: org.cloudfoundry.managed-service
     parameters:

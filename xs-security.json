@@ -1,22 +1,7 @@
 {
-  "scopes": [
-    {
-      "name": "$XSAPPNAME.emcallback",
-      "description": "Enterprise-Messaging Callback Access",
-      "grant-as-authority-to-apps": [
-        "$XSSERVICENAME(sales-order-approval-messaging)"
-      ]
-    },
-    {
-      "name": "$XSAPPNAME.emmanagement",
-      "description": "Enterprise-Messaging Management Access"
-    }
-  ],
+  "xsappname": "sales-order-approval",
+  "tenant-mode": "dedicated",
+  "scopes": [],
   "attributes": [],
-  "role-templates": [],
-  "authorities-inheritance": false,
-  "authorities": [
-    "$XSAPPNAME.emmanagement",
-    "$XSAPPNAME.mtcallback"
-  ]
+  "role-templates": []
 }

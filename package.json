@@ -16,24 +16,24 @@
     "start": "cds-serve"
   },
   "private": true,
-"cds": {
-  "requires": {
-    "[development]": {
-      "db": {
-        "kind": "sqlite",
-        "credentials": {
-          "url": "db.sqlite"
+  "cds": {
+    "requires": {
+      "[development]": {
+        "db": {
+          "kind": "sqlite",
+          "credentials": {
+            "url": "db.sqlite"
+          }
         }
-      }
-    },
-    "[production]": {
-      "auth": "xsuaa",
-      "db": "hana"
-    },
-    "messaging": {
-      "kind": "enterprise-messaging"
-    },
-    "destinations": true
+      },
+      "[production]": {
+        "auth": "xsuaa",
+        "db": "hana"
+      },
+      "messaging": {
+        "kind": "enterprise-messaging"
+      },
+      "destinations": true
+    }
   }
-}
 }

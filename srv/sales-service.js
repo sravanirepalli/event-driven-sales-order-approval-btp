@@ -1,4 +1,4 @@
-const { publishApprovalEvent } = require('../messaging/rabbitmq');
+const { publishApprovalEvent } = require('./messaging/rabbitmq');
 const cds = require('@sap/cds');
 
 module.exports = cds.service.impl(function () {
