@@ -30,9 +30,7 @@
         "auth": "xsuaa",
         "db": "hana"
       },
-      "messaging": {
-        "kind": "enterprise-messaging"
-      },
+     
       "destinations": true
     }
   }
