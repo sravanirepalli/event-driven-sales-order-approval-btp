@@ -39,6 +39,20 @@ modules:
     requires:
       - name: sales-order-approval-db
 
+  - name: sales-order-approval-worker
+    type: nodejs
+    path: worker
+    parameters:
+      instances: 1
+      buildpack: nodejs_buildpack
+      no-route: true
+      health-check-type: process
+    build-parameters:
+      builder: npm-ci
+    requires:
+      - name: sales-order-approval-db
+      - name: sales-order-approval-rabbitmq
+
 resources:
   - name: sales-order-approval-auth
     type: org.cloudfoundry.managed-service
@@ -65,3 +79,8 @@ resources:
     parameters:
       service: destination
       service-plan: lite
+
+  - name: sales-order-approval-rabbitmq
+    type: org.cloudfoundry.existing-service
+    parameters:
+      service-name: sales-order-approval-rabbitmq

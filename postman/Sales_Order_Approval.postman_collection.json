@@ -1,0 +1,169 @@
+{
+  "info": {
+    "_postman_id": "64826a3e-e04e-42ff-a53a-8abaee77f9ad",
+    "name": "Sales Order Approval - GitHub",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "55359094"
+  },
+  "item": [
+    {
+      "name": "01 - Get XSUAA Token",
+      "request": {
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{xsuaa_client_id}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{xsuaa_client_secret}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            {
+              "key": "grant_type",
+              "value": "client_credentials"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{xsuaa_url}}/oauth/token",
+          "host": [
+            "{{xsuaa_url}}"
+          ],
+          "path": [
+            "oauth",
+            "token"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "02 - Evaluate Approval",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{access_token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\r\n  \"orderId\": \"SO1005\"\r\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{cap_base_url}}/odata/v4/sales/EvaluateApproval",
+          "host": [
+            "{{cap_base_url}}"
+          ],
+          "path": [
+            "odata",
+            "v4",
+            "sales",
+            "EvaluateApproval"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "03 - Approve Request",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{access_token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\r\n  \"eventId\": \"EVT-SAMPLE-001\"\r\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{cap_base_url}}/odata/v4/sales/ApproveRequest",
+          "host": [
+            "{{cap_base_url}}"
+          ],
+          "path": [
+            "odata",
+            "v4",
+            "sales",
+            "ApproveRequest"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "04 - Reject Request",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{access_token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\r\n  \"eventId\": \"EVT-SAMPLE-002\",\r\n  \"reason\": \"Commercial terms not acceptable\"\r\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{cap_base_url}}/odata/v4/sales/RejectRequest",
+          "host": [
+            "{{cap_base_url}}"
+          ],
+          "path": [
+            "odata",
+            "v4",
+            "sales",
+            "RejectRequest"
+          ]
+        }
+      },
+      "response": []
+    }
+  ]
+}
