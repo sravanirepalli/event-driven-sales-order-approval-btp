@@ -10,7 +10,7 @@
     "@cap-js/hana": "^2.8.0",
     "@sap/cds": "^9",
     "@sap/hana-client": "^2",
-    "amqplib": "^0.10.9",
+    "amqplib": "^2.0.1",
     "dotenv": "^17.4.2"
   },
   "engines": {

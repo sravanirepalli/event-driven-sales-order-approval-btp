@@ -1,24 +1,59 @@
 {
   "name": "sales-order-approval",
   "version": "1.0.0",
+  "private": true,
+  "description": "Event-driven sales order approval extension on SAP BTP",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "cds-serve"
+  },
   "dependencies": {
     "@cap-js/hana": "^2",
     "@sap/cds": "^9",
     "@sap/xssec": "^4",
-    "amqplib": "^2.0.1",
     "dotenv": "^17.4.2"
   },
   "devDependencies": {
     "@cap-js/sqlite": "^2.4.0",
     "@sap/cds-dk": "^9"
   },
-  "scripts": {
-    "start": "cds-serve"
-  },
-  "private": true,
   "cds": {
     "requires": {
       "[development]": {
+        "auth": {
+          "kind": "mocked",
+          "users": {
+            "integration": {
+              "password": "integration",
+              "roles": [
+                "IntegrationClient"
+              ]
+            },
+            "approver": {
+              "password": "approver",
+              "roles": [
+                "ApprovalProcessor"
+              ]
+            },
+            "auditor": {
+              "password": "auditor",
+              "roles": [
+                "Auditor"
+              ]
+            },
+            "admin": {
+              "password": "admin",
+              "roles": [
+                "IntegrationClient",
+                "ApprovalProcessor",
+                "Auditor",
+                "Administrator"
+              ]
+            }
+          }
+        },
         "db": {
           "kind": "sqlite",
           "credentials": {
@@ -29,9 +64,7 @@
       "[production]": {
         "auth": "xsuaa",
         "db": "hana"
-      },
-     
-      "destinations": true
+      }
     }
   }
 }

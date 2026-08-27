@@ -1,627 +1,564 @@
-require('dotenv').config({ path: '../.env' });
+const path = require('path');
+
+require('dotenv').config({
+    path: path.resolve(__dirname, '../.env')
+});
 
 const amqp = require('amqplib');
 const cds = require('@sap/cds');
 const { randomUUID } = require('crypto');
 
-const QUEUE = 'sales-order-approval.queue';
+const { SELECT, INSERT, UPDATE } = cds.ql;
 
+const QUEUE = 'sales-order-approval.queue';
 const RETRY_EXCHANGE = 'sales-order-approval.retry-exchange';
 const RETRY_QUEUE = 'sales-order-approval.retry';
 const RETRY_ROUTING_KEY = 'sales-order-approval.retry';
-
 const DLX = 'sales-order-approval.dlx';
 const DLQ = 'sales-order-approval.dlq';
 const DLQ_ROUTING_KEY = 'sales-order-approval.failed';
 
 const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 5000;
 
+const ENTITIES = Object.freeze({
+    SalesOrders: 'salesapproval.SalesOrders',
+    ApprovalRequests: 'salesapproval.ApprovalRequests',
+    ProcessedEvents: 'salesapproval.ProcessedEvents',
+    AuditLogs: 'salesapproval.AuditLogs',
+    ErrorLogs: 'salesapproval.ErrorLogs'
+});
 
-/*
- * FAILURE AUDIT
- *
- * Records permanent processing failures in HANA.
- *
- * If HANA itself is unavailable, this function catches
- * the audit failure so the worker does not crash.
- */
-async function writeFailureAudit(
+let connection;
+let channel;
+let consumerTag;
+let shuttingDown = false;
+
+function getRabbitMqUrl() {
+    if (process.env.RABBITMQ_URL) {
+        return process.env.RABBITMQ_URL;
+    }
+
+    if (!process.env.VCAP_SERVICES) {
+        throw new Error(
+            'RabbitMQ credentials were not found in the environment'
+        );
+    }
+
+    let vcap;
+
+    try {
+        vcap = JSON.parse(process.env.VCAP_SERVICES);
+    } catch {
+        throw new Error('VCAP_SERVICES contains invalid JSON');
+    }
+
+    for (const services of Object.values(vcap)) {
+        for (const service of services) {
+            const credentials = service.credentials || {};
+
+            const url =
+                credentials.RABBITMQ_URL ||
+                credentials.uri ||
+                credentials.url;
+
+            if (
+                service.name ===
+                    'sales-order-approval-rabbitmq' &&
+                url
+            ) {
+                return url;
+            }
+        }
+    }
+
+    throw new Error(
+        'The sales-order-approval-rabbitmq binding has no supported connection URL'
+    );
+}
+
+function parseEvent(msg) {
+    let event;
+
+    try {
+        event = JSON.parse(msg.content.toString('utf8'));
+    } catch {
+        const error = new Error(
+            'Message body is not valid JSON'
+        );
+
+        error.nonRetryable = true;
+        throw error;
+    }
+
+    if (
+        !event ||
+        typeof event.eventId !== 'string' ||
+        !event.eventId.trim() ||
+        typeof event.orderId !== 'string' ||
+        !event.orderId.trim() ||
+        typeof event.correlationId !== 'string' ||
+        !event.correlationId.trim()
+    ) {
+        const error = new Error(
+            'eventId, orderId and correlationId are required'
+        );
+
+        error.nonRetryable = true;
+        throw error;
+    }
+
+    return {
+        ...event,
+        eventId: event.eventId.trim(),
+        orderId: event.orderId.trim(),
+        correlationId: event.correlationId.trim()
+    };
+}
+
+async function writeFailureRecords(
     db,
-    AuditLogs,
     event,
     error,
     retryCount,
     failureType
 ) {
     try {
-
         const now = new Date().toISOString();
+        const eventId =
+            event?.eventId || `UNKNOWN-${randomUUID()}`;
 
-        await db.run(
-            INSERT.into(AuditLogs).entries({
+        await db.tx(async (tx) => {
+            await tx.run(
+                INSERT.into(ENTITIES.AuditLogs).entries({
+                    ID: randomUUID(),
+                    orderId: event?.orderId || null,
+                    eventId,
+                    correlationId:
+                        event?.correlationId || null,
+                    eventType:
+                        'SALES_ORDER_PROCESSING_FAILED',
+                    status: 'FAILED',
+                    actor: 'RABBITMQ_WORKER',
+                    details: JSON.stringify({
+                        failureType,
+                        retryCount,
+                        error:
+                            error?.message ||
+                            String(error)
+                    }),
+                    createdAt: now
+                })
+            );
 
-                ID: randomUUID(),
-
-                orderId:
-                    event?.orderId || 'UNKNOWN',
-
-                eventId:
-                    event?.eventId || `UNKNOWN-${Date.now()}`,
-
-                eventType:
-                    'SALES_ORDER_PROCESSING_FAILED',
-
-                status:
-                    'FAILED',
-
-                details: JSON.stringify({
-                    eventId:
-                        event?.eventId || null,
-
-                    orderId:
-                        event?.orderId || null,
-
-                    failureType,
-
+            await tx.run(
+                INSERT.into(ENTITIES.ErrorLogs).entries({
+                    ID: randomUUID(),
+                    orderId: event?.orderId || null,
+                    eventId,
+                    correlationId:
+                        event?.correlationId || null,
+                    component: 'RABBITMQ_WORKER',
+                    errorCode: failureType,
+                    errorMessage:
+                        error?.message || String(error),
+                    failedStep: 'CONSUME_APPROVAL_EVENT',
+                    status: 'FAILED',
+                    retryable:
+                        failureType !== 'NON_RETRYABLE',
                     retryCount,
-
-                    error:
-                        error?.message || String(error)
-                }),
-
-                createdAt:
-                    now
-            })
-        );
+                    resolved: false,
+                    createdAt: now
+                })
+            );
+        });
 
         console.log(
-            `Failure audit recorded: ${event?.eventId || 'UNKNOWN'}`
+            `Failure records written for ${eventId}`
         );
-
     } catch (auditError) {
-
         console.error(
-            `Unable to write failure audit for ${event?.eventId || 'UNKNOWN'}:`,
+            'Unable to write failure records:',
             auditError.message
         );
     }
 }
 
+async function initializeTopology(ch) {
+    await ch.assertExchange(DLX, 'direct', {
+        durable: true
+    });
 
-/*
- * GET RABBITMQ CONNECTION URL
- *
- * Supports:
- * 1. BAS/local execution through .env
- * 2. Cloud Foundry service binding
- */
-function getRabbitMqUrl() {
+    await ch.assertQueue(DLQ, {
+        durable: true
+    });
 
-    if (process.env.RABBITMQ_URL) {
-        return process.env.RABBITMQ_URL;
-    }
-
-    if (process.env.VCAP_SERVICES) {
-
-        const vcap =
-            JSON.parse(process.env.VCAP_SERVICES);
-
-        for (const services of Object.values(vcap)) {
-
-            for (const service of services) {
-
-                if (
-                    service.name ===
-                        'sales-order-approval-rabbitmq' &&
-                    service.credentials?.RABBITMQ_URL
-                ) {
-
-                    return service.credentials.RABBITMQ_URL;
-                }
-            }
-        }
-    }
-
-    throw new Error(
-        'RABBITMQ_URL not found in environment or Cloud Foundry service binding'
-    );
-}
-
-
-/*
- * START WORKER
- */
-async function startConsumer() {
-
-    // Load worker CDS model
-    await cds.load('db/schema.cds');
-
-    // Connect to HANA
-    const db =
-        await cds.connect.to('db');
-
-    console.log(
-        'Connected to HANA database'
-    );
-
-
-    /*
-     * Fully-qualified CDS entities
-     */
-    const ApprovalRequests =
-        'salesapproval.ApprovalRequests';
-
-    const ProcessedEvents =
-        'salesapproval.ProcessedEvents';
-
-    const AuditLogs =
-        'salesapproval.AuditLogs';
-
-
-    /*
-     * Connect to RabbitMQ
-     */
-    const rabbitMqUrl =
-        getRabbitMqUrl();
-
-    const connection =
-        await amqp.connect(rabbitMqUrl);
-
-    const channel =
-        await connection.createChannel();
-
-
-    /*
-     * DEAD-LETTER INFRASTRUCTURE
-     */
-    await channel.assertExchange(
-        DLX,
-        'direct',
-        {
-            durable: true
-        }
-    );
-
-    await channel.assertQueue(
-        DLQ,
-        {
-            durable: true
-        }
-    );
-
-    await channel.bindQueue(
+    await ch.bindQueue(
         DLQ,
         DLX,
         DLQ_ROUTING_KEY
     );
 
-
-    /*
-     * RETRY INFRASTRUCTURE
-     *
-     * Messages wait 5 seconds here.
-     * RabbitMQ then sends them back
-     * to the main queue.
-     */
-    await channel.assertExchange(
+    await ch.assertExchange(
         RETRY_EXCHANGE,
         'direct',
-        {
-            durable: true
-        }
+        { durable: true }
     );
 
-    await channel.assertQueue(
-        RETRY_QUEUE,
-        {
-            durable: true,
-
-            arguments: {
-
-                'x-message-ttl':
-                    5000,
-
-                'x-dead-letter-exchange':
-                    '',
-
-                'x-dead-letter-routing-key':
-                    QUEUE
-            }
+    await ch.assertQueue(RETRY_QUEUE, {
+        durable: true,
+        arguments: {
+            'x-message-ttl': RETRY_DELAY_MS,
+            'x-dead-letter-exchange': '',
+            'x-dead-letter-routing-key': QUEUE
         }
-    );
+    });
 
-    await channel.bindQueue(
+    await ch.bindQueue(
         RETRY_QUEUE,
         RETRY_EXCHANGE,
         RETRY_ROUTING_KEY
     );
 
+    await ch.assertQueue(QUEUE, {
+        durable: true,
+        arguments: {
+            'x-dead-letter-exchange': DLX,
+            'x-dead-letter-routing-key':
+                DLQ_ROUTING_KEY
+        }
+    });
 
-    /*
-     * MAIN APPROVAL QUEUE
-     */
-    await channel.assertQueue(
-        QUEUE,
+    await ch.prefetch(1);
+}
+
+async function processEvent(db, event) {
+    const alreadyProcessed = await db.run(
+        SELECT.one
+            .from(ENTITIES.ProcessedEvents)
+            .where({ eventId: event.eventId })
+    );
+
+    if (alreadyProcessed) {
+        return 'DUPLICATE';
+    }
+
+    await db.tx(async (tx) => {
+        const now = new Date().toISOString();
+
+        await tx.run(
+            INSERT.into(ENTITIES.ApprovalRequests)
+                .entries({
+                    ID: randomUUID(),
+                    orderId: event.orderId,
+                    eventId: event.eventId,
+                    correlationId:
+                        event.correlationId,
+                    approvalPath:
+                        event.approvalPath || 'NONE',
+                    reason:
+                        event.reason || 'UNKNOWN',
+                    status: 'PENDING_APPROVAL',
+                    source:
+                        event.source ||
+                        'SAP_INTEGRATION_SUITE',
+                    workflowInstanceId:
+                        event.workflowInstanceId ||
+                        null
+                })
+        );
+
+        const updatedOrders = await tx.run(
+            UPDATE(ENTITIES.SalesOrders)
+                .set({
+                    status: 'PENDING_APPROVAL'
+                })
+                .where({ ID: event.orderId })
+        );
+
+        if (updatedOrders !== 1) {
+            throw new Error(
+                `Sales Order ${event.orderId} was not found`
+            );
+        }
+
+        await tx.run(
+            INSERT.into(ENTITIES.AuditLogs).entries({
+                ID: randomUUID(),
+                orderId: event.orderId,
+                eventId: event.eventId,
+                correlationId:
+                    event.correlationId,
+                eventType:
+                    event.eventType ||
+                    'SALES_ORDER_APPROVAL_REQUIRED',
+                status: 'RECEIVED',
+                actor: 'RABBITMQ_WORKER',
+                details: JSON.stringify(event),
+                createdAt: now
+            })
+        );
+
+        await tx.run(
+            INSERT.into(ENTITIES.ProcessedEvents)
+                .entries({
+                    eventId: event.eventId,
+                    orderId: event.orderId,
+                    correlationId:
+                        event.correlationId,
+                    eventType:
+                        event.eventType ||
+                        'SALES_ORDER_APPROVAL_REQUIRED',
+                    processedAt: now
+                })
+        );
+    });
+
+    return 'PROCESSED';
+}
+
+async function publishRetry(msg, retryCount) {
+    const headers = {
+        ...(msg.properties.headers || {}),
+        'x-retry-count': retryCount
+    };
+
+    channel.publish(
+        RETRY_EXCHANGE,
+        RETRY_ROUTING_KEY,
+        msg.content,
         {
-            durable: true,
-
-            arguments: {
-
-                'x-dead-letter-exchange':
-                    DLX,
-
-                'x-dead-letter-routing-key':
-                    DLQ_ROUTING_KEY
-            }
+            ...msg.properties,
+            persistent: true,
+            contentType:
+                msg.properties.contentType ||
+                'application/json',
+            headers
         }
     );
 
+    await channel.waitForConfirms();
+}
 
-    /*
-     * Process one unacknowledged
-     * message at a time.
-     */
-    channel.prefetch(1);
+async function handleMessage(db, msg) {
+    if (!msg) {
+        console.warn(
+            'RabbitMQ cancelled the consumer'
+        );
+        return;
+    }
 
-    console.log(
-        `Waiting for messages on ${QUEUE}...`
-    );
+    let event;
 
+    try {
+        event = parseEvent(msg);
 
-    /*
-     * CONSUMER
-     */
-    channel.consume(
+        console.log(
+            `Received event=${event.eventId} correlation=${event.correlationId}`
+        );
 
-        QUEUE,
+        const result = await processEvent(db, event);
 
-        async (msg) => {
+        channel.ack(msg);
 
-            if (!msg) {
-                return;
-            }
+        console.log(
+            `${result} event=${event.eventId}`
+        );
+    } catch (error) {
+        console.error(
+            `Processing failed for ${event?.eventId || 'UNKNOWN'}:`,
+            error.message
+        );
 
-            let event;
+        if (error.nonRetryable) {
+            await writeFailureRecords(
+                db,
+                event,
+                error,
+                0,
+                'NON_RETRYABLE'
+            );
 
-            try {
+            channel.nack(msg, false, false);
+            return;
+        }
 
-                /*
-                 * PARSE EVENT
-                 */
-                event =
-                    JSON.parse(
-                        msg.content.toString()
-                    );
+        /*
+         * If another worker processed the event concurrently,
+         * acknowledge this redelivery as a duplicate.
+         */
+        if (event?.eventId) {
+            const processed = await db.run(
+                SELECT.one
+                    .from(ENTITIES.ProcessedEvents)
+                    .where({
+                        eventId: event.eventId
+                    })
+            );
 
-                console.log(
-                    `Approval event received: ${event.eventId}`
-                );
-
-
-                /*
-                 * EVENT VALIDATION
-                 *
-                 * Invalid business messages
-                 * should not be retried.
-                 */
-                if (
-                    !event.eventId ||
-                    !event.orderId
-                ) {
-
-                    const validationError =
-                        new Error(
-                            'Invalid event: eventId and orderId are required'
-                        );
-
-                    validationError.nonRetryable =
-                        true;
-
-                    throw validationError;
-                }
-
-
-                /*
-                 * IDEMPOTENCY CHECK
-                 *
-                 * Prevent duplicate approval
-                 * records when RabbitMQ
-                 * redelivers an event.
-                 */
-                const alreadyProcessed =
-                    await db.run(
-
-                        SELECT.one
-                            .from(ProcessedEvents)
-                            .where({
-                                eventId:
-                                    event.eventId
-                            })
-                    );
-
-
-                if (alreadyProcessed) {
-
-                    console.log(
-                        `Duplicate event skipped: ${event.eventId}`
-                    );
-
-                    channel.ack(msg);
-
-                    return;
-                }
-
-
-                /*
-                 * DATABASE TRANSACTION
-                 *
-                 * These three operations must
-                 * succeed or fail together.
-                 */
-                await db.tx(async (tx) => {
-
-                    const now =
-                        new Date().toISOString();
-
-
-                    /*
-                     * 1. CREATE APPROVAL REQUEST
-                     */
-                    await tx.run(
-
-                        INSERT
-                            .into(ApprovalRequests)
-                            .entries({
-
-                                ID:
-                                    randomUUID(),
-
-                                orderId:
-                                    event.orderId,
-
-                                eventId:
-                                    event.eventId,
-
-                                approvalPath:
-                                    event.approvalPath ||
-                                    'NONE',
-
-                                reason:
-                                    event.reason ||
-                                    'UNKNOWN',
-
-                                status:
-                                    event.status ||
-                                    'PENDING_APPROVAL',
-
-                                source:
-                                    event.source ||
-                                    'RabbitMQ',
-
-                                createdAt:
-                                    now,
-
-                                updatedAt:
-                                    now
-                            })
-                    );
-
-
-                    /*
-                     * 2. CREATE AUDIT RECORD
-                     */
-                    await tx.run(
-
-                        INSERT
-                            .into(AuditLogs)
-                            .entries({
-
-                                ID:
-                                    randomUUID(),
-
-                                orderId:
-                                    event.orderId,
-
-                                eventId:
-                                    event.eventId,
-
-                                eventType:
-                                    event.eventType ||
-                                    'SALES_ORDER_APPROVAL_REQUIRED',
-
-                                status:
-                                    'RECEIVED',
-
-                                details:
-                                    JSON.stringify(event),
-
-                                createdAt:
-                                    now
-                            })
-                    );
-
-
-                    /*
-                     * 3. MARK EVENT PROCESSED
-                     */
-                    await tx.run(
-
-                        INSERT
-                            .into(ProcessedEvents)
-                            .entries({
-
-                                eventId:
-                                    event.eventId,
-
-                                orderId:
-                                    event.orderId,
-
-                                processedAt:
-                                    now
-                            })
-                    );
-                });
-
-
-                /*
-                 * ACK ONLY AFTER
-                 * SUCCESSFUL HANA COMMIT
-                 */
+            if (processed) {
                 channel.ack(msg);
 
                 console.log(
-                    `Event processed successfully: ${event.eventId}`
+                    `Concurrent duplicate acknowledged: ${event.eventId}`
                 );
-
-
-            } catch (error) {
-
-                console.error(
-                    `Event processing failed: ${event?.eventId || 'UNKNOWN'}`,
-                    error.message
-                );
-
-
-                /*
-                 * NON-RETRYABLE FAILURE
-                 *
-                 * Example:
-                 * invalid event payload.
-                 *
-                 * Audit it and send directly
-                 * to the DLQ.
-                 */
-                if (error.nonRetryable) {
-
-                    console.error(
-                        `Non-retryable error. Sending event to DLQ: ${event?.eventId || 'UNKNOWN'}`
-                    );
-
-                    await writeFailureAudit(
-                        db,
-                        AuditLogs,
-                        event,
-                        error,
-                        0,
-                        'NON_RETRYABLE'
-                    );
-
-                    channel.nack(
-                        msg,
-                        false,
-                        false
-                    );
-
-                    return;
-                }
-
-
-                /*
-                 * CURRENT RETRY COUNT
-                 */
-                const headers =
-                    msg.properties.headers || {};
-
-                const currentRetryCount =
-                    Number(
-                        headers['x-retry-count'] || 0
-                    );
-
-
-                /*
-                 * RETRY TEMPORARY FAILURE
-                 */
-                if (
-                    currentRetryCount <
-                    MAX_RETRIES
-                ) {
-
-                    const nextRetryCount =
-                        currentRetryCount + 1;
-
-                    console.log(
-                        `Retrying event ${event?.eventId || 'UNKNOWN'} - attempt ${nextRetryCount}/${MAX_RETRIES}`
-                    );
-
-
-                    /*
-                     * Send a copy to the retry queue.
-                     *
-                     * The retry count is carried
-                     * in the RabbitMQ header.
-                     */
-                    channel.publish(
-                        RETRY_EXCHANGE,
-                        RETRY_ROUTING_KEY,
-                        msg.content,
-                        {
-                            persistent:
-                                true,
-
-                            contentType:
-                                msg.properties.contentType ||
-                                'application/json',
-
-                            headers: {
-                                ...headers,
-
-                                'x-retry-count':
-                                    nextRetryCount
-                            }
-                        }
-                    );
-
-
-                    /*
-                     * Original message can now
-                     * be acknowledged because
-                     * the retry copy was published.
-                     */
-                    channel.ack(msg);
-
-                    return;
-                }
-
-
-                /*
-                 * RETRIES EXHAUSTED
-                 *
-                 * Record permanent failure
-                 * and send to DLQ.
-                 */
-                console.error(
-                    `Maximum retries reached for event ${event?.eventId || 'UNKNOWN'}. Sending to DLQ.`
-                );
-
-                await writeFailureAudit(
-                    db,
-                    AuditLogs,
-                    event,
-                    error,
-                    currentRetryCount,
-                    'RETRIES_EXHAUSTED'
-                );
-
-                channel.nack(
-                    msg,
-                    false,
-                    false
-                );
+                return;
             }
-        },
-
-        {
-            noAck: false
         }
+
+        const currentRetryCount = Number(
+            msg.properties.headers?.[
+                'x-retry-count'
+            ] || 0
+        );
+
+        if (currentRetryCount < MAX_RETRIES) {
+            const nextRetryCount =
+                currentRetryCount + 1;
+
+            try {
+                await publishRetry(
+                    msg,
+                    nextRetryCount
+                );
+
+                channel.ack(msg);
+
+                console.log(
+                    `Retry scheduled ${nextRetryCount}/${MAX_RETRIES}`
+                );
+            } catch (publishError) {
+                console.error(
+                    'Retry publishing was not confirmed:',
+                    publishError.message
+                );
+
+                channel.nack(msg, false, true);
+            }
+
+            return;
+        }
+
+        await writeFailureRecords(
+            db,
+            event,
+            error,
+            currentRetryCount,
+            'RETRIES_EXHAUSTED'
+        );
+
+        channel.nack(msg, false, false);
+    }
+}
+
+async function gracefulShutdown(signal) {
+    if (shuttingDown) {
+        return;
+    }
+
+    shuttingDown = true;
+
+    console.log(
+        `Received ${signal}; stopping worker`
+    );
+
+    try {
+        if (channel && consumerTag) {
+            await channel.cancel(consumerTag);
+        }
+
+        if (channel) {
+            await channel.close();
+        }
+
+        if (connection) {
+            await connection.close();
+        }
+
+        await cds.shutdown();
+
+        process.exit(0);
+    } catch (error) {
+        console.error(
+            'Graceful shutdown failed:',
+            error.message
+        );
+
+        process.exit(1);
+    }
+}
+
+async function startConsumer() {
+    const modelPath = path.join(
+        __dirname,
+        'db',
+        'schema.cds'
+    );
+
+    const model = await cds.load(modelPath);
+    cds.model = cds.compile.for.nodejs(model);
+
+    const db = await cds.connect.to('db');
+
+    console.log('Connected to database');
+
+    connection = await amqp.connect(
+        getRabbitMqUrl()
+    );
+
+    connection.on('error', (error) => {
+        console.error(
+            'RabbitMQ connection error:',
+            error.message
+        );
+    });
+
+    connection.on('close', () => {
+        if (!shuttingDown) {
+            console.error(
+                'RabbitMQ connection closed unexpectedly'
+            );
+
+            process.exit(1);
+        }
+    });
+
+    channel =
+        await connection.createConfirmChannel();
+
+    channel.on('error', (error) => {
+        console.error(
+            'RabbitMQ channel error:',
+            error.message
+        );
+    });
+
+    await initializeTopology(channel);
+
+    const result = await channel.consume(
+        QUEUE,
+        (msg) => handleMessage(db, msg),
+        { noAck: false }
+    );
+
+    consumerTag = result.consumerTag;
+
+    console.log(
+        `Waiting for messages on ${QUEUE}`
     );
 }
 
+process.once(
+    'SIGTERM',
+    () => gracefulShutdown('SIGTERM')
+);
 
-/*
- * WORKER STARTUP FAILURE
- */
+process.once(
+    'SIGINT',
+    () => gracefulShutdown('SIGINT')
+);
+
 startConsumer().catch((error) => {
-
     console.error(
         'Worker failed to start:',
         error

@@ -21,3 +21,4 @@ mta_archives/
 .gen/
 .env
 event-mesh.json
+mta-op-*/

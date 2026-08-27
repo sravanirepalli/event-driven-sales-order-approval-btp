@@ -1,7 +1,61 @@
 {
   "xsappname": "sales-order-approval",
   "tenant-mode": "dedicated",
-  "scopes": [],
+  "description": "Authorization model for the Sales Order Approval application",
+  "scopes": [
+    {
+      "name": "$XSAPPNAME.IntegrationClient",
+      "description": "Evaluate sales orders and submit integration errors"
+    },
+    {
+      "name": "$XSAPPNAME.ApprovalProcessor",
+      "description": "Approve or reject sales-order approval requests"
+    },
+    {
+      "name": "$XSAPPNAME.Auditor",
+      "description": "Read approval, audit, processing, and error records"
+    },
+    {
+      "name": "$XSAPPNAME.Administrator",
+      "description": "Full administrative access"
+    }
+  ],
   "attributes": [],
-  "role-templates": []
+  "role-templates": [
+    {
+      "name": "IntegrationClient",
+      "description": "Technical integration client",
+      "scope-references": [
+        "$XSAPPNAME.IntegrationClient"
+      ]
+    },
+    {
+      "name": "ApprovalProcessor",
+      "description": "Business approval processor",
+      "scope-references": [
+        "$XSAPPNAME.ApprovalProcessor"
+      ]
+    },
+    {
+      "name": "Auditor",
+      "description": "Audit and support user",
+      "scope-references": [
+        "$XSAPPNAME.Auditor"
+      ]
+    },
+    {
+      "name": "Administrator",
+      "description": "Application administrator",
+      "scope-references": [
+        "$XSAPPNAME.IntegrationClient",
+        "$XSAPPNAME.ApprovalProcessor",
+        "$XSAPPNAME.Auditor",
+        "$XSAPPNAME.Administrator"
+      ]
+    }
+  ],
+  "authorities": [
+    "$XSAPPNAME.IntegrationClient",
+    "$XSAPPNAME.ApprovalProcessor"
+  ]
 }
