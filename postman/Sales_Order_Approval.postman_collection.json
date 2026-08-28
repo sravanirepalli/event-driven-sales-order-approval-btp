@@ -1,13 +1,24 @@
 {
   "info": {
-    "_postman_id": "64826a3e-e04e-42ff-a53a-8abaee77f9ad",
-    "name": "Sales Order Approval - GitHub",
+    "_postman_id": "1407826a-e1d0-45de-beb8-362319ec096f",
+    "name": "Sales Order Approval",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
     "_exporter_id": "55359094"
   },
   "item": [
     {
       "name": "01 - Get XSUAA Token",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const response = pm.response.json();\r\npm.environment.set(\"access_token\", response.access_token);"
+            ]
+          }
+        }
+      ],
       "request": {
         "auth": {
           "type": "basic",
@@ -36,9 +47,83 @@
           ]
         },
         "url": {
-          "raw": "{{xsuaa_url}}/oauth/token",
+          "raw": "https://adcbd85btrial.authentication.ap21.hana.ondemand.com/oauth/token",
+          "protocol": "https",
           "host": [
-            "{{xsuaa_url}}"
+            "adcbd85btrial",
+            "authentication",
+            "ap21",
+            "hana",
+            "ondemand",
+            "com"
+          ],
+          "path": [
+            "oauth",
+            "token"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "01B - Get Integration Suite Token",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const response = pm.response.json();\r\npm.environment.set(\"cpi_access_token\", response.access_token);"
+            ]
+          }
+        },
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              ""
+            ]
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{cpi_client_id}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{cpi_client_secret}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            {
+              "key": "grant_type",
+              "value": "client_credentials"
+            }
+          ]
+        },
+        "url": {
+          "raw": "https://adcbd85btrial.authentication.ap21.hana.ondemand.com/oauth/token",
+          "protocol": "https",
+          "host": [
+            "adcbd85btrial",
+            "authentication",
+            "ap21",
+            "hana",
+            "ondemand",
+            "com"
           ],
           "path": [
             "oauth",
@@ -73,9 +158,15 @@
           }
         },
         "url": {
-          "raw": "{{cap_base_url}}/odata/v4/sales/EvaluateApproval",
+          "raw": "https://adcbd85btrial-dev-sales-order-approval-srv.cfapps.ap21.hana.ondemand.com/odata/v4/sales/EvaluateApproval",
+          "protocol": "https",
           "host": [
-            "{{cap_base_url}}"
+            "adcbd85btrial-dev-sales-order-approval-srv",
+            "cfapps",
+            "ap21",
+            "hana",
+            "ondemand",
+            "com"
           ],
           "path": [
             "odata",
@@ -104,7 +195,7 @@
         "header": [],
         "body": {
           "mode": "raw",
-          "raw": "{\r\n  \"eventId\": \"EVT-SAMPLE-001\"\r\n}",
+          "raw": "{\r\n  \"eventId\": \"669468a5-4723-4a45-9a57-ed0d0997cbc6\"\r\n}",
           "options": {
             "raw": {
               "language": "json"
@@ -112,9 +203,15 @@
           }
         },
         "url": {
-          "raw": "{{cap_base_url}}/odata/v4/sales/ApproveRequest",
+          "raw": "https://adcbd85btrial-dev-sales-order-approval-srv.cfapps.ap21.hana.ondemand.com/odata/v4/sales/ApproveRequest",
+          "protocol": "https",
           "host": [
-            "{{cap_base_url}}"
+            "adcbd85btrial-dev-sales-order-approval-srv",
+            "cfapps",
+            "ap21",
+            "hana",
+            "ondemand",
+            "com"
           ],
           "path": [
             "odata",
@@ -143,7 +240,7 @@
         "header": [],
         "body": {
           "mode": "raw",
-          "raw": "{\r\n  \"eventId\": \"EVT-SAMPLE-002\",\r\n  \"reason\": \"Commercial terms not acceptable\"\r\n}",
+          "raw": "{\r\n  \"eventId\": \"bde8a38d-3ed8-49c9-89ab-8c6a4de2655a\",\r\n  \"reason\": \"Commercial terms require revision\"\r\n}",
           "options": {
             "raw": {
               "language": "json"
@@ -151,15 +248,65 @@
           }
         },
         "url": {
-          "raw": "{{cap_base_url}}/odata/v4/sales/RejectRequest",
+          "raw": "https://adcbd85btrial-dev-sales-order-approval-srv.cfapps.ap21.hana.ondemand.com/odata/v4/sales/RejectRequest",
+          "protocol": "https",
           "host": [
-            "{{cap_base_url}}"
+            "adcbd85btrial-dev-sales-order-approval-srv",
+            "cfapps",
+            "ap21",
+            "hana",
+            "ondemand",
+            "com"
           ],
           "path": [
             "odata",
             "v4",
             "sales",
             "RejectRequest"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "05 - Trigger Approval iFlow",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{cpi_access_token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\r\n  \"orderId\": \"SO1005\"\r\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "https://adcbd85btrial.it-cpitrial03-rt.cfapps.ap21.hana.ondemand.com/http/sales-order-approval-v2",
+          "protocol": "https",
+          "host": [
+            "adcbd85btrial",
+            "it-cpitrial03-rt",
+            "cfapps",
+            "ap21",
+            "hana",
+            "ondemand",
+            "com"
+          ],
+          "path": [
+            "http",
+            "sales-order-approval-v2"
           ]
         }
       },
