@@ -33,6 +33,167 @@ let connection;
 let channel;
 let consumerTag;
 let shuttingDown = false;
+let sapBuildTokenCache;
+
+function requireEnv(name) {
+    const value = process.env[name];
+
+    if (!value) {
+        throw new Error(`${name} is required`);
+    }
+
+    return value;
+}
+
+function getSapBuildCredentials() {
+    if (
+        process.env.SAP_BUILD_CLIENT_ID &&
+        process.env.SAP_BUILD_CLIENT_SECRET &&
+        process.env.SAP_BUILD_TOKEN_URL
+    ) {
+        return {
+            clientId: process.env.SAP_BUILD_CLIENT_ID,
+            clientSecret: process.env.SAP_BUILD_CLIENT_SECRET,
+            tokenUrl: process.env.SAP_BUILD_TOKEN_URL
+        };
+    }
+
+    if (process.env.VCAP_SERVICES) {
+        const vcap = JSON.parse(process.env.VCAP_SERVICES);
+
+        for (const services of Object.values(vcap)) {
+            for (const service of services) {
+                const credentials = service.credentials || {};
+                const isSapBuild =
+                    service.name === 'sales-order-approval-process-automation' ||
+                    service.label === 'process-automation-service' ||
+                    service.tags?.includes('process-automation');
+
+                if (
+                    isSapBuild &&
+                    credentials.clientid &&
+                    credentials.clientsecret &&
+                    credentials.url
+                ) {
+                    return {
+                        clientId: credentials.clientid,
+                        clientSecret: credentials.clientsecret,
+                        tokenUrl: `${credentials.url.replace(/\/$/, '')}/oauth/token`
+                    };
+                }
+            }
+        }
+    }
+
+    throw new Error(
+        'SAP Build credentials were not found in the environment or service binding'
+    );
+}
+
+async function getSapBuildAccessToken() {
+    const now = Date.now();
+
+    if (sapBuildTokenCache?.expiresAt > now + 30000) {
+        return sapBuildTokenCache.accessToken;
+    }
+
+    const { tokenUrl, clientId, clientSecret } =
+        getSapBuildCredentials();
+    const basicAuth = Buffer.from(
+        `${clientId}:${clientSecret}`
+    ).toString('base64');
+
+    const response = await fetch(tokenUrl, {
+        method: 'POST',
+        headers: {
+            Authorization: `Basic ${basicAuth}`,
+            'Content-Type':
+                'application/x-www-form-urlencoded'
+        },
+        body: 'grant_type=client_credentials'
+    });
+
+    if (!response.ok) {
+        throw new Error(
+            `SAP Build token request failed with HTTP ${response.status}`
+        );
+    }
+
+    const token = await response.json();
+
+    sapBuildTokenCache = {
+        accessToken: token.access_token,
+        expiresAt:
+            now +
+            Number(token.expires_in || 300) * 1000
+    };
+
+    return sapBuildTokenCache.accessToken;
+}
+
+function buildApprovalContext(event) {
+    return {
+        eventId: event.eventId,
+        correlationId: event.correlationId,
+        orderId: event.orderId,
+        customer: event.customer || 'UNKNOWN',
+        orderValue: Number(event.orderValue || 0),
+        currency: event.currency || 'USD',
+        customerRisk: event.customerRisk || 'UNKNOWN',
+        approvalPath:
+            event.approvalPath || 'SALES_MANAGER',
+        reason:
+            event.reason || 'APPROVAL_REQUIRED',
+        requestedAt:
+            event.requestedAt ||
+            new Date().toISOString(),
+        approverEmail:
+            event.approverEmail ||
+            requireEnv('DEFAULT_APPROVER_EMAIL')
+    };
+}
+
+async function startSapBuildWorkflow(event) {
+    const accessToken =
+        await getSapBuildAccessToken();
+    const apiUrl = requireEnv('SAP_BUILD_API_URL');
+    const definitionId =
+        requireEnv('SAP_BUILD_DEFINITION_ID');
+
+    const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+            Accept: 'application/json'
+        },
+        body: JSON.stringify({
+            definitionId,
+            context: {
+                approvalContext:
+                    buildApprovalContext(event)
+            }
+        })
+    });
+
+    const responseText = await response.text();
+
+    if (!response.ok) {
+        throw new Error(
+            `SAP Build workflow start failed with HTTP ${response.status}: ${responseText}`
+        );
+    }
+
+    const workflow = responseText
+        ? JSON.parse(responseText)
+        : {};
+
+    console.log(
+        `Started SAP Build workflow ${workflow.id || 'accepted'} for event=${event.eventId}`
+    );
+
+    return workflow;
+}
 
 function getRabbitMqUrl() {
     if (process.env.RABBITMQ_URL) {
@@ -243,44 +404,85 @@ async function processEvent(db, event) {
         return 'DUPLICATE';
     }
 
-    await db.tx(async (tx) => {
-        const now = new Date().toISOString();
+    const existingApproval = await db.run(
+        SELECT.one
+            .from(ENTITIES.ApprovalRequests)
+            .where({ eventId: event.eventId })
+    );
 
-        await tx.run(
-            INSERT.into(ENTITIES.ApprovalRequests)
-                .entries({
+    if (!existingApproval) {
+        await db.tx(async (tx) => {
+            const now = new Date().toISOString();
+
+            await tx.run(
+                INSERT.into(ENTITIES.ApprovalRequests)
+                    .entries({
+                        ID: randomUUID(),
+                        orderId: event.orderId,
+                        eventId: event.eventId,
+                        correlationId:
+                            event.correlationId,
+                        approvalPath:
+                            event.approvalPath || 'NONE',
+                        reason:
+                            event.reason || 'UNKNOWN',
+                        status: 'PENDING_APPROVAL',
+                        source:
+                            event.source ||
+                            'SAP_INTEGRATION_SUITE',
+                        workflowInstanceId:
+                            event.workflowInstanceId ||
+                            null
+                    })
+            );
+
+            const updatedOrders = await tx.run(
+                UPDATE(ENTITIES.SalesOrders)
+                    .set({
+                        status: 'PENDING_APPROVAL'
+                    })
+                    .where({ ID: event.orderId })
+            );
+
+            if (updatedOrders !== 1) {
+                throw new Error(
+                    `Sales Order ${event.orderId} was not found`
+                );
+            }
+
+            await tx.run(
+                INSERT.into(ENTITIES.AuditLogs).entries({
                     ID: randomUUID(),
                     orderId: event.orderId,
                     eventId: event.eventId,
                     correlationId:
                         event.correlationId,
-                    approvalPath:
-                        event.approvalPath || 'NONE',
-                    reason:
-                        event.reason || 'UNKNOWN',
-                    status: 'PENDING_APPROVAL',
-                    source:
-                        event.source ||
-                        'SAP_INTEGRATION_SUITE',
-                    workflowInstanceId:
-                        event.workflowInstanceId ||
-                        null
+                    eventType:
+                        event.eventType ||
+                        'SALES_ORDER_APPROVAL_REQUIRED',
+                    status: 'RECEIVED',
+                    actor: 'RABBITMQ_WORKER',
+                    details: JSON.stringify(event),
+                    createdAt: now
                 })
-        );
-
-        const updatedOrders = await tx.run(
-            UPDATE(ENTITIES.SalesOrders)
-                .set({
-                    status: 'PENDING_APPROVAL'
-                })
-                .where({ ID: event.orderId })
-        );
-
-        if (updatedOrders !== 1) {
-            throw new Error(
-                `Sales Order ${event.orderId} was not found`
             );
-        }
+        });
+    }
+
+    const workflow =
+        await startSapBuildWorkflow(event);
+
+    await db.tx(async (tx) => {
+        const now = new Date().toISOString();
+
+        await tx.run(
+            UPDATE(ENTITIES.ApprovalRequests)
+                .set({
+                    workflowInstanceId:
+                        workflow.id || null
+                })
+                .where({ eventId: event.eventId })
+        );
 
         await tx.run(
             INSERT.into(ENTITIES.AuditLogs).entries({
@@ -290,11 +492,15 @@ async function processEvent(db, event) {
                 correlationId:
                     event.correlationId,
                 eventType:
-                    event.eventType ||
-                    'SALES_ORDER_APPROVAL_REQUIRED',
-                status: 'RECEIVED',
+                    'SAP_BUILD_WORKFLOW_STARTED',
+                status: 'STARTED',
                 actor: 'RABBITMQ_WORKER',
-                details: JSON.stringify(event),
+                details: JSON.stringify({
+                    workflowInstanceId:
+                        workflow.id || null,
+                    definitionId:
+                        process.env.SAP_BUILD_DEFINITION_ID
+                }),
                 createdAt: now
             })
         );
