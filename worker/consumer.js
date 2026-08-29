@@ -64,6 +64,7 @@ function getSapBuildCredentials() {
         for (const services of Object.values(vcap)) {
             for (const service of services) {
                 const credentials = service.credentials || {};
+                const uaa = credentials.uaa || credentials;
                 const isSapBuild =
                     service.name === 'sales-order-approval-process-automation' ||
                     service.label === 'process-automation-service' ||
@@ -71,14 +72,14 @@ function getSapBuildCredentials() {
 
                 if (
                     isSapBuild &&
-                    credentials.clientid &&
-                    credentials.clientsecret &&
-                    credentials.url
+                    uaa.clientid &&
+                    uaa.clientsecret &&
+                    uaa.url
                 ) {
                     return {
-                        clientId: credentials.clientid,
-                        clientSecret: credentials.clientsecret,
-                        tokenUrl: `${credentials.url.replace(/\/$/, '')}/oauth/token`
+                        clientId: uaa.clientid,
+                        clientSecret: uaa.clientsecret,
+                        tokenUrl: `${uaa.url.replace(/\/$/, '')}/oauth/token`
                     };
                 }
             }
