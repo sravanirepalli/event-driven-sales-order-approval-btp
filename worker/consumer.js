@@ -405,6 +405,34 @@ async function processEvent(db, event) {
         return 'DUPLICATE';
     }
 
+    /*
+     * Enrich the workflow context from HANA. This keeps SAP Build tasks
+     * complete when an older producer publishes only routing fields.
+     */
+    const order = await db.run(
+        SELECT.one
+            .from(ENTITIES.SalesOrders)
+            .where({ ID: event.orderId })
+    );
+
+    if (!order) {
+        const error = new Error(
+            `Sales Order ${event.orderId} was not found`
+        );
+        error.nonRetryable = true;
+        throw error;
+    }
+
+    const workflowEvent = {
+        ...event,
+        customer: event.customer || order.customer,
+        orderValue:
+            event.orderValue ?? order.orderValue,
+        currency: event.currency || 'USD',
+        customerRisk:
+            event.customerRisk || order.customerRisk
+    };
+
     const existingApproval = await db.run(
         SELECT.one
             .from(ENTITIES.ApprovalRequests)
@@ -471,7 +499,7 @@ async function processEvent(db, event) {
     }
 
     const workflow =
-        await startSapBuildWorkflow(event);
+        await startSapBuildWorkflow(workflowEvent);
 
     await db.tx(async (tx) => {
         const now = new Date().toISOString();
