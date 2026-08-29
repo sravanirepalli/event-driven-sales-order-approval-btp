@@ -1,5 +1,8 @@
 const cds = require('@sap/cds');
 const { randomUUID } = require('crypto');
+const {
+    evaluateApprovalPolicy
+} = require('./lib/approval-policy');
 
 const { SELECT, INSERT, UPDATE } = cds.ql;
 
@@ -61,50 +64,23 @@ module.exports = cds.service.impl(function () {
             );
         }
 
-        const orderValue = Number(order.orderValue);
-        const discount = Number(order.discount || 0);
+        let policy;
 
-        if (
-            !Number.isFinite(orderValue) ||
-            !Number.isFinite(discount)
-        ) {
+        try {
+            policy = evaluateApprovalPolicy(order);
+        } catch (error) {
             return req.reject(
                 422,
                 `Sales Order ${orderId} contains invalid monetary values`
             );
         }
 
-        let approvalRequired = false;
-        let approvalPath = 'NONE';
-        let reason = 'STANDARD_ORDER';
-
-        if (
-            orderValue >= 100000 &&
-            order.customerRisk === 'HIGH'
-        ) {
-            approvalRequired = true;
-            approvalPath =
-                'SALES_MANAGER -> FINANCE -> BUSINESS_HEAD';
-            reason = 'HIGH_VALUE_HIGH_RISK';
-
-        } else if (discount >= 20) {
-            approvalRequired = true;
-            approvalPath =
-                'SALES_MANAGER -> FINANCE';
-            reason = 'HIGH_DISCOUNT';
-
-        } else if (orderValue >= 100000) {
-            approvalRequired = true;
-            approvalPath = 'SALES_MANAGER';
-            reason = 'HIGH_VALUE';
-        }
-
         return {
-            approvalRequired,
+            approvalRequired: policy.approvalRequired,
             eventId: randomUUID(),
             correlationId: getCorrelationId(req),
-            approvalPath,
-            reason
+            approvalPath: policy.approvalPath,
+            reason: policy.reason
         };
     });
 

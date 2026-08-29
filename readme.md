@@ -1,5 +1,7 @@
 # Event-Driven Sales Order Approval on SAP BTP
 
+[![CI](https://github.com/sravanirepalli/event-driven-sales-order-approval-btp/actions/workflows/ci.yml/badge.svg)](https://github.com/sravanirepalli/event-driven-sales-order-approval-btp/actions/workflows/ci.yml)
+
 An enterprise-grade proof of concept for extending sales-order approvals on
 SAP Business Technology Platform without adding custom approval logic to the
 ERP core.
@@ -181,6 +183,21 @@ OAuth client credentials are read from the
 as application environment variables or source code.
 
 ## Build and deploy
+
+### Automated validation
+
+The approval policy is isolated from the CAP request handler and tested with
+Node.js's built-in test runner. The tests cover rule precedence, threshold
+boundaries, standard processing, and invalid monetary values.
+
+```bash
+npm test
+```
+
+GitHub Actions runs the tests, JavaScript syntax checks, and CDS compilation
+on every push to `main` and on every pull request.
+
+### Deployment
 
 Install dependencies and validate the JavaScript:
 

@@ -7,7 +7,8 @@
     "node": ">=20"
   },
   "scripts": {
-    "start": "cds-serve"
+    "start": "cds-serve",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "@cap-js/hana": "^2",
