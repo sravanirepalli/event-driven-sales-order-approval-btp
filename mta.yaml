@@ -58,6 +58,7 @@ modules:
     requires:
       - name: sales-order-approval-db
       - name: sales-order-approval-rabbitmq
+      - name: sales-order-approval-process-automation
 
 resources:
   - name: sales-order-approval-auth
@@ -84,3 +85,8 @@ resources:
     type: org.cloudfoundry.existing-service
     parameters:
       service-name: sales-order-approval-rabbitmq
+
+  - name: sales-order-approval-process-automation
+    type: org.cloudfoundry.existing-service
+    parameters:
+      service-name: sales-order-approval-process-automation
