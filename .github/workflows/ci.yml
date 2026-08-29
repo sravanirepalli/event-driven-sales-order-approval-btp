@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install CAP dependencies
+        run: npm ci
+
+      - name: Install worker dependencies
+        run: npm --prefix worker ci
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Validate JavaScript syntax
+        run: |
+          node --check srv/sales-service.js
+          node --check srv/lib/approval-policy.js
+          node --check worker/consumer.js
+
+      - name: Compile CDS model
+        run: npx cds compile db/schema.cds --to json > /dev/null
