@@ -27,25 +27,25 @@
           "kind": "mocked",
           "users": {
             "integration": {
-              "password": "integration",
+              "password": "",
               "roles": [
                 "IntegrationClient"
               ]
             },
             "approver": {
-              "password": "approver",
+              "password": "",
               "roles": [
                 "ApprovalProcessor"
               ]
             },
             "auditor": {
-              "password": "auditor",
+              "password": "",
               "roles": [
                 "Auditor"
               ]
             },
             "admin": {
-              "password": "admin",
+              "password": "",
               "roles": [
                 "IntegrationClient",
                 "ApprovalProcessor",
