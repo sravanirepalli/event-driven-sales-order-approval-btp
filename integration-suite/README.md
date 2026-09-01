@@ -56,9 +56,9 @@ Never commit service-key JSON, client secrets, bearer tokens, passwords, or `.en
 5. The Node.js worker consumes the message and starts the SAP Build Process Automation workflow.
 6. The workflow routes the request through Sales Manager, Finance, and Business Head approval.
 
-## Verified scenario
+## End-to-end validation
 
-The restored tenant was tested with order `SO1005`:
+The integration was validated with approval-required order `SO1005`:
 
 - Postman trigger returned `202 Accepted`.
 - Integration Suite message processing completed successfully.
