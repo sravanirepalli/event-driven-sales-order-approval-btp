@@ -3,7 +3,8 @@
     "_postman_id": "1407826a-e1d0-45de-beb8-362319ec096f",
     "name": "Sales Order Approval",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "_exporter_id": "55359094"
+    "_exporter_id": "55359094",
+    "description": "End-to-end API validation for the Event-Driven Sales Order Approval solution on SAP BTP. Use the provided environment template and supply credentials only in your private Postman environment."
   },
   "item": [
     {
@@ -14,7 +15,12 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "const response = pm.response.json();\r\npm.environment.set(\"access_token\", response.access_token);"
+              "const response = pm.response.json();\r\npm.environment.set(\"access_token\", response.access_token);",
+              "// Professional validation checks",
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.test('Response time is below 10 seconds', () => pm.expect(pm.response.responseTime).to.be.below(10000));",
+              "const json = pm.response.json();",
+              "pm.test('Access token returned', () => pm.expect(json.access_token).to.be.a('string').and.not.empty);"
             ]
           }
         }
@@ -46,22 +52,8 @@
             }
           ]
         },
-        "url": {
-          "raw": "https://adcbd85btrial.authentication.ap21.hana.ondemand.com/oauth/token",
-          "protocol": "https",
-          "host": [
-            "adcbd85btrial",
-            "authentication",
-            "ap21",
-            "hana",
-            "ondemand",
-            "com"
-          ],
-          "path": [
-            "oauth",
-            "token"
-          ]
-        }
+        "url": "{{xsuaa_token_url}}/oauth/token",
+        "description": "Obtains an OAuth 2.0 client-credentials token for secured CAP API calls."
       },
       "response": []
     },
@@ -73,7 +65,12 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "const response = pm.response.json();\r\npm.environment.set(\"cpi_access_token\", response.access_token);"
+              "const response = pm.response.json();\r\npm.environment.set(\"cpi_access_token\", response.access_token);",
+              "// Professional validation checks",
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.test('Response time is below 10 seconds', () => pm.expect(pm.response.responseTime).to.be.below(10000));",
+              "const json = pm.response.json();",
+              "pm.test('Access token returned', () => pm.expect(json.access_token).to.be.a('string').and.not.empty);"
             ]
           }
         },
@@ -114,22 +111,8 @@
             }
           ]
         },
-        "url": {
-          "raw": "https://adcbd85btrial.authentication.ap21.hana.ondemand.com/oauth/token",
-          "protocol": "https",
-          "host": [
-            "adcbd85btrial",
-            "authentication",
-            "ap21",
-            "hana",
-            "ondemand",
-            "com"
-          ],
-          "path": [
-            "oauth",
-            "token"
-          ]
-        }
+        "url": "{{cpi_token_url}}/oauth/token",
+        "description": "Obtains an OAuth 2.0 client-credentials token for the Integration Suite runtime endpoint."
       },
       "response": []
     },
@@ -150,33 +133,33 @@
         "header": [],
         "body": {
           "mode": "raw",
-          "raw": "{\r\n  \"orderId\": \"SO1005\"\r\n}",
+          "raw": "{\n  \"orderId\": \"{{order_id}}\"\n}",
           "options": {
             "raw": {
               "language": "json"
             }
           }
         },
-        "url": {
-          "raw": "https://adcbd85btrial-dev-sales-order-approval-srv.cfapps.ap21.hana.ondemand.com/odata/v4/sales/EvaluateApproval",
-          "protocol": "https",
-          "host": [
-            "adcbd85btrial-dev-sales-order-approval-srv",
-            "cfapps",
-            "ap21",
-            "hana",
-            "ondemand",
-            "com"
-          ],
-          "path": [
-            "odata",
-            "v4",
-            "sales",
-            "EvaluateApproval"
-          ]
-        }
+        "url": "{{cap_base_url}}/odata/v4/sales/EvaluateApproval",
+        "description": "Evaluates the configured approval policy for the selected sales order. When returned, the event ID is stored for subsequent approval or rejection requests."
       },
-      "response": []
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Professional validation checks",
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.test('Response time is below 10 seconds', () => pm.expect(pm.response.responseTime).to.be.below(10000));",
+              "const json = pm.response.json();",
+              "pm.test('Approval decision returned', () => pm.expect(json.approvalRequired).to.be.a('boolean'));",
+              "if (json.eventId) pm.environment.set('approval_event_id', json.eventId);"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "03 - Approve Request",
@@ -195,33 +178,30 @@
         "header": [],
         "body": {
           "mode": "raw",
-          "raw": "{\r\n  \"eventId\": \"669468a5-4723-4a45-9a57-ed0d0997cbc6\"\r\n}",
+          "raw": "{\n  \"eventId\": \"{{approval_event_id}}\"\n}",
           "options": {
             "raw": {
               "language": "json"
             }
           }
         },
-        "url": {
-          "raw": "https://adcbd85btrial-dev-sales-order-approval-srv.cfapps.ap21.hana.ondemand.com/odata/v4/sales/ApproveRequest",
-          "protocol": "https",
-          "host": [
-            "adcbd85btrial-dev-sales-order-approval-srv",
-            "cfapps",
-            "ap21",
-            "hana",
-            "ondemand",
-            "com"
-          ],
-          "path": [
-            "odata",
-            "v4",
-            "sales",
-            "ApproveRequest"
-          ]
-        }
+        "url": "{{cap_base_url}}/odata/v4/sales/ApproveRequest",
+        "description": "Submits an approval decision for the event identified by approval_event_id."
       },
-      "response": []
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Professional validation checks",
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.test('Response time is below 10 seconds', () => pm.expect(pm.response.responseTime).to.be.below(10000));"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "04 - Reject Request",
@@ -240,33 +220,30 @@
         "header": [],
         "body": {
           "mode": "raw",
-          "raw": "{\r\n  \"eventId\": \"bde8a38d-3ed8-49c9-89ab-8c6a4de2655a\",\r\n  \"reason\": \"Commercial terms require revision\"\r\n}",
+          "raw": "{\n  \"eventId\": \"{{approval_event_id}}\",\n  \"reason\": \"{{rejection_reason}}\"\n}",
           "options": {
             "raw": {
               "language": "json"
             }
           }
         },
-        "url": {
-          "raw": "https://adcbd85btrial-dev-sales-order-approval-srv.cfapps.ap21.hana.ondemand.com/odata/v4/sales/RejectRequest",
-          "protocol": "https",
-          "host": [
-            "adcbd85btrial-dev-sales-order-approval-srv",
-            "cfapps",
-            "ap21",
-            "hana",
-            "ondemand",
-            "com"
-          ],
-          "path": [
-            "odata",
-            "v4",
-            "sales",
-            "RejectRequest"
-          ]
-        }
+        "url": "{{cap_base_url}}/odata/v4/sales/RejectRequest",
+        "description": "Submits a rejection decision and reason for the event identified by approval_event_id."
       },
-      "response": []
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Professional validation checks",
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.test('Response time is below 10 seconds', () => pm.expect(pm.response.responseTime).to.be.below(10000));"
+            ]
+          }
+        }
+      ]
     },
     {
       "name": "05 - Trigger Approval iFlow",
@@ -285,32 +262,30 @@
         "header": [],
         "body": {
           "mode": "raw",
-          "raw": "{\r\n  \"orderId\": \"SO1005\"\r\n}",
+          "raw": "{\n  \"orderId\": \"{{order_id}}\"\n}",
           "options": {
             "raw": {
               "language": "json"
             }
           }
         },
-        "url": {
-          "raw": "https://adcbd85btrial.it-cpitrial03-rt.cfapps.ap21.hana.ondemand.com/http/sales-order-approval-v2",
-          "protocol": "https",
-          "host": [
-            "adcbd85btrial",
-            "it-cpitrial03-rt",
-            "cfapps",
-            "ap21",
-            "hana",
-            "ondemand",
-            "com"
-          ],
-          "path": [
-            "http",
-            "sales-order-approval-v2"
-          ]
-        }
+        "url": "{{iflow_base_url}}/http/sales-order-approval-v2",
+        "description": "Submits a sales-order request to Integration Suite and starts the end-to-end approval process."
       },
-      "response": []
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Professional validation checks",
+              "pm.test('HTTP 202', () => pm.response.to.have.status(202));",
+              "pm.test('Response time is below 10 seconds', () => pm.expect(pm.response.responseTime).to.be.below(10000));"
+            ]
+          }
+        }
+      ]
     }
   ]
 }
