@@ -2,19 +2,13 @@
 
 [![CI](https://github.com/sravanirepalli/event-driven-sales-order-approval-btp/actions/workflows/ci.yml/badge.svg)](https://github.com/sravanirepalli/event-driven-sales-order-approval-btp/actions/workflows/ci.yml)
 
-An enterprise-grade proof of concept for extending sales-order approvals on
-SAP Business Technology Platform without adding custom approval logic to the
-ERP core.
+A production-oriented reference implementation for extending sales-order approvals on SAP Business Technology Platform without adding custom approval logic to the ERP core.
 
-The solution uses SAP Integration Suite, a CAP application with SAP HANA
-Cloud, asynchronous messaging, a Node.js worker, and SAP Build Process
-Automation. Postman represents the upstream sales-order client, while RabbitMQ provides the asynchronous messaging layer. The design keeps these integration boundaries replaceable for enterprise landscapes.
+The solution combines SAP Integration Suite, a CAP application with SAP HANA Cloud, asynchronous messaging, a Node.js worker, and SAP Build Process Automation. Postman represents the upstream sales-order client, while RabbitMQ provides the asynchronous messaging layer. These integration boundaries remain replaceable for enterprise landscapes.
 
 ## Business scenario
 
-Sales orders are evaluated using configurable business conditions. Orders
-that require additional control are routed through the appropriate approval
-path.
+Sales orders are evaluated using configurable business conditions. Orders that require additional control are routed through the appropriate approval path.
 
 | Condition | Approval path | Reason |
 | --- | --- | --- |
@@ -27,10 +21,10 @@ path.
 
 ```mermaid
 flowchart TD
-    A["Postman<br/>S/4HANA simulator"] --> B["SAP Integration Suite<br/>CPI iFlow"]
-    B --> C["CAP service<br/>Node.js + XSUAA"]
+    A["Upstream sales-order client<br/>Postman"] --> B["SAP Integration Suite<br/>CPI iFlow"]
+    B --> C["CAP approval service<br/>Node.js + XSUAA"]
     C --> D["SAP HANA Cloud"]
-    C --> E["RabbitMQ<br/>approval event"]
+    B --> E["RabbitMQ<br/>approval event"]
     E --> F["Node.js worker<br/>retry + DLQ + idempotency"]
     F --> G["SAP Build Process Automation"]
     G --> H["Sales Manager"]
@@ -42,66 +36,59 @@ flowchart TD
 
 ## End-to-end flow
 
-1. Postman sends a sales-order request to the deployed Integration Suite iFlow.
+1. The upstream client sends a sales-order request to the deployed Integration Suite iFlow.
 2. Integration Suite securely calls the CAP `EvaluateApproval` action.
-3. CAP reads the order from HANA Cloud and evaluates the business conditions.
-4. When approval is required, CAP publishes a persistent message to RabbitMQ.
-5. The worker consumes the event, prevents duplicate processing, enriches the
-   workflow context from HANA, and starts SAP Build Process Automation.
-6. SAP Build routes the order through Sales Manager, Finance, and Business
-   Head tasks according to the selected approval path.
-7. After the final decision, SAP Build calls the secured CAP
-   `ApproveRequest` or `RejectRequest` action through a BTP destination.
-8. CAP updates the approval request, sales-order status, and audit history in
-   HANA Cloud.
+3. CAP reads the order from HANA Cloud, evaluates the business conditions, and returns the decision and event context.
+4. When approval is required, Integration Suite publishes the approval event to RabbitMQ.
+5. The worker consumes the event, prevents duplicate processing, enriches the workflow context from HANA, and starts SAP Build Process Automation.
+6. SAP Build routes the order through Sales Manager, Finance, and Business Head tasks according to the selected approval path.
+7. After the final decision, SAP Build calls the secured CAP `ApproveRequest` or `RejectRequest` action through a BTP destination.
+8. CAP updates the approval request, sales-order status, and audit history in HANA Cloud.
 
 ## SAP BTP components
 
 | Component | Responsibility |
 | --- | --- |
-| SAP Integration Suite | Receives the simulated source request, applies integration processing, and calls CAP |
-| SAP CAP (Node.js) | Exposes OData APIs, evaluates approval rules, publishes events, and processes callbacks |
+| SAP Integration Suite | Receives the source request, calls CAP, applies routing, and publishes approval events |
+| SAP CAP (Node.js) | Exposes secured OData APIs, evaluates approval rules, and processes workflow callbacks |
 | SAP HANA Cloud / HDI | Stores sales orders, approval requests, processed events, audit logs, and error logs |
-| SAP Build Process Automation | Executes the human approval workflow |
+| SAP Build Process Automation | Executes the multi-level human approval workflow |
 | SAP Destination service | Provides the controlled CAP API destination used by SAP Build Actions |
 | XSUAA | Protects CAP APIs using OAuth 2.0 roles and scopes |
 | Cloud Foundry | Runs the CAP service, database deployer, and background worker |
-| RabbitMQ | Provides asynchronous messaging in the trial environment |
+| RabbitMQ | Provides durable asynchronous messaging between Integration Suite and the worker |
 
-## Trial substitutions and production mapping
+## Integration boundaries
 
-| Trial implementation | Production-aligned replacement |
+| Reference component | Enterprise deployment option |
 | --- | --- |
-| Postman simulates order creation/change | SAP S/4HANA business events and standard Sales Order APIs |
-| RabbitMQ | SAP Event Mesh |
-| HANA Cloud contains representative order data | S/4HANA remains the system of record; CAP stores extension data |
-| No Cloud Connector | Cloud Connector is added only for an on-premise S/4HANA connection |
+| Postman as the upstream client | SAP S/4HANA business events and standard Sales Order APIs |
+| RabbitMQ | SAP Event Mesh, SAP Advanced Event Mesh, or an approved enterprise message broker |
+| Representative order data in HANA Cloud | S/4HANA remains the system of record while CAP stores extension data |
+| Direct cloud connectivity | SAP Cloud Connector when an on-premise S/4HANA connection is required |
 
-The boundaries are intentionally separated so the simulators can be replaced
-without redesigning the approval workflow or CAP extension.
+The boundaries are intentionally separated so source systems and messaging infrastructure can be replaced without redesigning the approval workflow or CAP extension.
 
 ## Reliability and operational controls
 
-- Persistent RabbitMQ messages and durable queues
+- Durable RabbitMQ queues and persistent messages
 - Retry exchange and retry queue with delayed redelivery
 - Maximum retry count and dead-letter queue for permanent failures
 - Idempotency using `ProcessedEvents`
 - Duplicate approval-request prevention
 - Acknowledgement only after successful processing and persistence
 - Correlation IDs across Integration Suite, CAP, messaging, and workflow
-- Audit and error records stored in HANA
+- Audit and error records stored in HANA Cloud
 - Graceful worker shutdown and controlled connection handling
 - Workflow context enrichment from HANA before task creation
 
 ## Security
 
-- CAP endpoints require authenticated users.
+- CAP endpoints require authenticated callers.
 - XSUAA roles separate integration, approval, audit, and administration access.
 - Integration Suite and SAP Build use OAuth-protected calls.
-- SAP Build credentials are supplied to the worker through a Cloud Foundry
-  service binding and `VCAP_SERVICES`.
-- Secrets, tokens, service keys, destination credentials, and `.env` files
-  must never be committed to Git.
+- SAP Build credentials are supplied to the worker through a Cloud Foundry service binding and `VCAP_SERVICES`.
+- Secrets, tokens, service keys, destination credentials, and `.env` files must never be committed to Git.
 
 ## CAP API
 
@@ -113,7 +100,7 @@ Base path:
 
 | Operation | Purpose |
 | --- | --- |
-| `POST /EvaluateApproval` | Evaluates an order and publishes an approval event when required |
+| `POST /EvaluateApproval` | Evaluates an order and returns the approval decision and event context |
 | `POST /ApproveRequest` | Completes the approval and marks the order `APPROVED` |
 | `POST /RejectRequest` | Completes the approval and marks the order `REJECTED` |
 | `POST /LogError` | Persists an integration or processing failure |
@@ -125,7 +112,7 @@ Base path:
 ```text
 .
 |-- db/                         HANA CDS model and sample data
-|-- integration-suite/          Exported Integration Suite iFlow
+|-- integration-suite/          iFlow documentation, scripts, and importable export
 |-- postman/                    End-to-end Postman collection
 |-- sap-build/
 |   |-- actions/                Exported CAP Actions project
@@ -144,7 +131,7 @@ Base path:
 - SAP Build Process Automation entitlement
 - SAP Integration Suite entitlement
 - XSUAA and Destination services
-- RabbitMQ service instance for this trial implementation
+- RabbitMQ or another compatible message broker
 - Node.js 20 or later
 - Cloud Foundry CLI and MultiApps plugin
 - MTA Build Tool (`mbt`)
@@ -154,20 +141,16 @@ Base path:
 Create these platform resources before deployment:
 
 1. RabbitMQ service instance named `sales-order-approval-rabbitmq`.
-2. SAP Build Process Automation service instance named
-   `sales-order-approval-process-automation`.
+2. SAP Build Process Automation service instance named `sales-order-approval-process-automation`.
 3. Destination `CAP_APPROVAL_API` for the secured CAP callback API.
-4. SAP Build workflow and Actions projects imported or deployed from the
-   exports in `sap-build/`.
-5. Integration Suite iFlow imported from
-   `integration-suite/sales-order-approval-iflow.zip`.
+4. SAP Build workflow and Actions projects imported or deployed from the exports in `sap-build/`.
+5. Integration Suite iFlow imported from `integration-suite/sales-order-approval-iflow.zip`.
 
 Do not document real client secrets or service-key values in this repository.
 
 ## Worker configuration
 
-The worker is deployed without a route because it consumes messages in the
-background.
+The worker is deployed without a route because it consumes messages in the background.
 
 | Variable | Purpose |
 | --- | --- |
@@ -177,24 +160,19 @@ background.
 | `RABBITMQ_URL` | Optional local fallback when no RabbitMQ binding is available |
 | `HDB_NODEJS_THREADPOOL_SIZE` | Optional HANA client thread-pool tuning |
 
-OAuth client credentials are read from the
-`sales-order-approval-process-automation` service binding. They are not stored
-as application environment variables or source code.
+OAuth client credentials are read from the `sales-order-approval-process-automation` service binding. They are not stored as application environment variables or source code.
 
 ## Build and deploy
 
 ### Automated validation
 
-The approval policy is isolated from the CAP request handler and tested with
-Node.js's built-in test runner. The tests cover rule precedence, threshold
-boundaries, standard processing, and invalid monetary values.
+The approval policy is isolated from the CAP request handler and tested with Node.js's built-in test runner. The tests cover rule precedence, threshold boundaries, standard processing, and invalid monetary values.
 
 ```bash
 npm test
 ```
 
-GitHub Actions runs the tests, JavaScript syntax checks, and CDS compilation
-on every push to `main` and on every pull request.
+GitHub Actions runs the tests, JavaScript syntax checks, and CDS compilation on every push to `main` and on every pull request.
 
 ### Deployment
 
@@ -214,7 +192,7 @@ mbt build
 cf deploy mta_archives/sales-order-approval_1.0.0.mtar
 ```
 
-If the worker is deployed separately during development:
+If the worker is deployed separately:
 
 ```bash
 cf push sales-order-approval-worker \
@@ -227,8 +205,7 @@ cf push sales-order-approval-worker \
   -c "npm start"
 ```
 
-Set the non-secret workflow configuration and restart the worker after any
-change:
+Set the non-secret workflow configuration and restart the worker after any change:
 
 ```bash
 cf set-env sales-order-approval-worker SAP_BUILD_API_URL "<workflow-api-url>"
@@ -239,32 +216,30 @@ cf restage sales-order-approval-worker
 
 ## Verification
 
-1. Obtain the XSUAA and Integration Suite access tokens using the Postman
-   collection.
+1. Obtain the XSUAA and Integration Suite access tokens using the Postman collection.
 2. Run `05 - Trigger Approval iFlow` with an order such as `SO1005`.
 3. Confirm `202 Accepted` and capture the event and correlation IDs.
-4. Verify the worker logs show the event was received, the SAP Build workflow
-   was started, and the event was processed.
-5. Complete the Sales Manager, Finance, and Business Head tasks in My Inbox.
-6. Verify the SAP Build workflow instance is `Completed`.
-7. Verify CAP received `POST /ApproveRequest` with HTTP 200.
-8. Read the order through CAP and confirm its final HANA status is `APPROVED`.
+4. Confirm Integration Suite message processing completed successfully.
+5. Verify RabbitMQ delivered and acknowledged the event and that the worker consumer is active.
+6. Confirm the SAP Build workflow instance was created.
+7. Complete the Sales Manager, Finance, and Business Head tasks in My Inbox.
+8. Verify the SAP Build workflow instance is `Completed`.
+9. Verify CAP received `POST /ApproveRequest` with HTTP 200.
+10. Read the order through CAP and confirm its final HANA status is `APPROVED`.
 
-## Proven end-to-end result
+## End-to-end validation
 
 The reference test using order `SO1005` completed successfully:
 
 - Integration Suite returned `202 Accepted`.
-- The RabbitMQ worker started SAP Build Process Automation.
-- All three human approval tasks completed.
-- SAP Build called the CAP approval action successfully.
-- CAP returned HTTP 200.
-- The HANA sales-order record ended in status `APPROVED`.
+- Integration Suite message processing completed successfully.
+- RabbitMQ delivered and acknowledged the event.
+- The worker started SAP Build Process Automation.
+- Sales Manager, Finance, and Business Head approvals completed.
+- The workflow instance reached `Completed`.
+- CAP processed the final approval callback.
+- The HANA sales-order record reached status `APPROVED`.
 
-## Scope statement
+## Scope
 
-This repository demonstrates a production-aligned, enterprise-grade proof of
-concept. It is not represented as a live production S/4HANA implementation.
-Production adoption would add real S/4HANA connectivity, SAP Event Mesh,
-environment-specific transport and governance, operational alerting,
-performance testing, and enterprise security review.
+This repository demonstrates a production-oriented SAP BTP integration architecture validated end to end. Enterprise adoption would connect the approved source system and messaging platform, add environment-specific transport and governance, operational alerting, performance testing, and the required security review.
