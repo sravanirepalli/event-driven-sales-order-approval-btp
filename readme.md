@@ -8,8 +8,7 @@ ERP core.
 
 The solution uses SAP Integration Suite, a CAP application with SAP HANA
 Cloud, asynchronous messaging, a Node.js worker, and SAP Build Process
-Automation. In this trial implementation, Postman simulates SAP S/4HANA and
-RabbitMQ substitutes for SAP Event Mesh.
+Automation. Postman represents the upstream sales-order client, while RabbitMQ provides the asynchronous messaging layer. The design keeps these integration boundaries replaceable for enterprise landscapes.
 
 ## Business scenario
 
