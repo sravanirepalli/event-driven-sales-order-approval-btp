@@ -83,4 +83,4 @@ The integration was validated with approval-required order `SO1005`:
 4. Save, validate, and deploy the iFlow.
 5. Wait for runtime status `Started`, then use the generated HTTPS endpoint.
 
-Environment-specific endpoints and credentials are intentionally excluded from this repository.
+Credentials are excluded from the repository. The SAP export may retain environment-specific endpoint defaults and generated metadata; review and replace all externalized parameters after import.
